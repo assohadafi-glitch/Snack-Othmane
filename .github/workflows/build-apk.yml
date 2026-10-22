@@ -16,6 +16,13 @@ jobs:
         with:
           node-version: 20
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Pillow
+        run: pip install pillow
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -27,7 +34,6 @@ jobs:
           cp index.html www/index.html
           npm init -y
           npm install @capacitor/core@6.2.1 @capacitor/cli@6.2.1 @capacitor/android@6.2.1 @capacitor/status-bar@6.0.2
-          npm install --save-dev @capacitor/assets@3.0.5
           cat > capacitor.config.json <<'EOF'
           {
             "appId": "com.snackothman.menu",
@@ -40,20 +46,46 @@ jobs:
           EOF
           npx cap add android
 
-      - name: Make the app icon
-        continue-on-error: true
+      - name: Apply the app icon
         run: |
-          IM="convert"; command -v magick >/dev/null 2>&1 && IM="magick"
-          mkdir -p assets
-          $IM -size 1024x1024 xc:'#0e0b0a' assets/icon-background.png
-          $IM -size 1024x1024 xc:none \
-            -fill '#f3a712' -draw 'circle 512,512 512,196' \
-            -fill '#0e0b0a' -draw 'circle 428,452 428,392' -draw 'circle 512,420 512,350' -draw 'circle 596,452 596,392' \
-            -draw 'roundrectangle 408,470 616,640 22,22' \
-            -fill '#f3a712' -draw 'rectangle 408,590 616,604' \
-            assets/icon-foreground.png
-          $IM assets/icon-background.png assets/icon-foreground.png -composite assets/icon-only.png
-          npx capacitor-assets generate --android
+          R=android/app/src/main/res
+          find $R -name 'ic_launcher*.png' -delete
+          find $R -name 'ic_launcher*.webp' -delete
+          mkdir -p $R/mipmap-anydpi-v26 $R/values
+          cat > $R/values/ic_launcher_background.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_launcher_background">#F7B229</color>
+          </resources>
+          EOF
+          cat > $R/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+          cp $R/mipmap-anydpi-v26/ic_launcher.xml $R/mipmap-anydpi-v26/ic_launcher_round.xml
+          python3 - <<'PY'
+          import os
+          from PIL import Image, ImageDraw
+          res = 'android/app/src/main/res'
+          full = Image.open('icon.png').convert('RGBA')
+          fg = Image.open('icon-foreground.png').convert('RGBA')
+          for d, m in {'mdpi': 1, 'hdpi': 1.5, 'xhdpi': 2, 'xxhdpi': 3, 'xxxhdpi': 4}.items():
+              p = f'{res}/mipmap-{d}'
+              os.makedirs(p, exist_ok=True)
+              s = int(48 * m)
+              a = full.resize((s, s), Image.LANCZOS)
+              a.save(f'{p}/ic_launcher.png')
+              mask = Image.new('L', (s, s), 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, s - 1, s - 1), fill=255)
+              r = a.copy()
+              r.putalpha(mask)
+              r.save(f'{p}/ic_launcher_round.png')
+              f = int(108 * m)
+              fg.resize((f, f), Image.LANCZOS).save(f'{p}/ic_launcher_foreground.png')
+          PY
 
       - name: Build the APK
         run: |
